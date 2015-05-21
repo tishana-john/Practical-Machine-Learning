@@ -1,0 +1,122 @@
+---
+title: Analysis of Activity Tracking Device data
+  Report
+author: "Tishana John"
+output:
+  html_document:
+    fig_height: 9
+    fig_width: 9
+---
+
+## Introduction  
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.  
+
+In this project, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants who were asked to do barbell lifts,  to predict how they did the exercise.  
+
+## Data Preprocessing  
+```{r, cache = T}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
+```
+### Getting Data
+The data for the project was taken from http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+```{r, cache = T}
+trainUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainFile <- "./data/pml-training.csv"
+testFile  <- "./data/pml-testing.csv"
+if (!file.exists("./data")) {
+  dir.create("./data")
+}
+if (!file.exists(trainFile)) {
+  download.file(trainUrl, destfile=trainFile, method="curl")
+}
+if (!file.exists(testFile)) {
+  download.file(testUrl, destfile=testFile, method="curl")
+}
+```  
+### Reading Data
+After downloading the data from the data source, we can read the two csv files into two data frames.  
+```{r, cache = T}
+trainRaw <- read.csv("./data/pml-training.csv")
+dim(trainRaw)
+
+testRaw <- read.csv("./data/pml-testing.csv")
+dim(testRaw)
+```
+The training data set contains 19622 observations of 160 variables, and test data  contains 20 observations of 160 variables. We will be trying to predict the outcome of the "classe" variable.
+
+### Cleaning data
+Stripping data of columns with missing values, and irrelevant variables.
+```{r, cache = T}
+sum(complete.cases(trainRaw))
+```
+Removing columns with NA or missing values.
+```{r, cache = T}
+trainRaw <- trainRaw[, colSums(is.na(trainRaw)) == 0] 
+testRaw <- testRaw[, colSums(is.na(testRaw)) == 0] 
+```  
+Ignoring columns that are irrelevant.
+```{r, cache = T}
+classe <- trainRaw$classe
+trainRemove <- grepl("^X|timestamp|window", names(trainRaw))
+trainRaw <- trainRaw[, !trainRemove]
+trainCleaned <- trainRaw[, sapply(trainRaw, is.numeric)]
+trainCleaned$classe <- classe
+testRemove <- grepl("^X|timestamp|window", names(testRaw))
+testRaw <- testRaw[, !testRemove]
+testCleaned <- testRaw[, sapply(testRaw, is.numeric)]
+```
+Now, the cleaned training data contains 19622 observations of 53 variables, and  test data set contains 20 observations of 53 variables. The "classe" variable is still in the cleaned set.
+
+### Slicing data
+For crossvalidation, the training data is split into training and testing sub data sets. 
+```{r, cache = T}
+set.seed(1303017) # For reproducibile purpose
+inTrain <- createDataPartition(trainCleaned$classe, p=0.70, list=F)
+trainData <- trainCleaned[inTrain, ]
+testData <- trainCleaned[-inTrain, ]
+```
+
+### Modeling Data
+The **Random Forest** algorithm is used to fit a predictive model for activity recognition as it automatically selects relevant variables and is robust to outliers. **5-fold cross validation** is used when applying the algorithm.  
+```{r, cache = T}
+controlRf <- trainControl(method="cv", 5)
+modelRf <- train(classe ~ ., data=trainData, method="rf", trControl=controlRf, ntree=250)
+modelRf
+```
+The performance of the model on the validation data set can be estimated as follows..
+```{r, cache = T}
+predictRf <- predict(modelRf, testData)
+confusionMatrix(testData$classe, predictRf)
+```
+```{r, cache = T}
+accuracy <- postResample(predictRf, testData$classe)
+accuracy
+oose <- 1 - as.numeric(confusionMatrix(testData$classe, predictRf)$overall[1])
+oose
+```
+The estimated accuracy of the model is 99.4%, and the estimated out-of-sample error is 0.59%.
+
+## Predicting for Test Data Set
+Applying the model to the original testing data set.. 
+```{r, cache = T}
+result <- predict(modelRf, testCleaned[, -length(names(testCleaned))])
+result
+```  
+
+## Appendix: Figures
+1. Correlation Matrix   
+```{r, cache = T}
+corrPlot <- cor(trainData[, -length(names(trainData))])
+corrplot(corrPlot, method="color")
+```
+2. Decision Tree 
+```{r, cache = T}
+treeModel <- rpart(classe ~ ., data=trainData, method="class")
+prp(treeModel) # fast plot
+```
